@@ -1,0 +1,56 @@
+<!DOCTYPE html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPS Sender</title>
+<style>
+  body{font-family:system-ui;text-align:center;padding:40px;background:#0b0f14;color:#fff}
+  button{font-size:1.2rem;padding:14px 28px;border-radius:12px;border:0;background:#00e5ff}
+  #speed{font-size:4rem;margin:24px 0}
+</style></head><body>
+<h2>ESP32 GPS Sender</h2>
+<button id="btn">Connect &amp; start</button>
+<div id="speed">0 km/h</div>
+<div id="log"></div>
+<script>
+const SERVICE = '0000ff00-0000-1000-8000-00805f9b34fb';
+const CHAR    = '0000ff01-0000-1000-8000-00805f9b34fb';
+let characteristic, last = null;
+
+const log = t => document.getElementById('log').textContent = t;
+
+function distM(a, b){                       // haversine, meters
+  const R = 6371000, r = x => x * Math.PI / 180;
+  const dLat = r(b.lat - a.lat), dLon = r(b.lon - a.lon);
+  const h = Math.sin(dLat/2)**2 + Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+async function send(kmh){
+  document.getElementById('speed').textContent = kmh.toFixed(1) + ' km/h';
+  if(!characteristic) return;
+  try { await characteristic.writeValueWithoutResponse(new TextEncoder().encode(kmh.toFixed(1))); }
+  catch(e){ log('BLE write error: ' + e.message); }
+}
+
+function onPos(p){
+  let ms = p.coords.speed;                  // m/s, may be null
+  const now = { lat: p.coords.latitude, lon: p.coords.longitude, t: p.timestamp };
+  if(ms == null && last){                    // fallback: compute from position change
+    const dt = (now.t - last.t) / 1000;
+    if(dt > 0) ms = distM(last, now) / dt;
+  }
+  last = now;
+  if(ms != null && ms >= 0) send(ms * 3.6);
+}
+
+document.getElementById('btn').onclick = async () => {
+  try {
+    const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
+    const server = await dev.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE);
+    characteristic = await svc.getCharacteristic(CHAR);
+    log('Connected to ' + dev.name);
+    navigator.geolocation.watchPosition(onPos, e => log('GPS error: ' + e.message),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+  } catch(e){ log('Error: ' + e.message); }
+};
+</script></body></html>
